@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+<meta name="apple-mobile-web-app-title" content="Operationalize"/>
+<meta name="theme-color" content="#f9fafb"/>
+<title>Operationalize</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📋</text></svg>"/>
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%233b82f6'/><text x='50' y='65' text-anchor='middle' font-size='55'>✓</text></svg>"/>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
+@keyframes scaleIn{from{transform:scale(.3);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+</style>
+<script>
+// --- Inline PWA Manifest ---
+const manifest=JSON.stringify({
+  name:"Operationalize",
+  short_name:"Operate",
+  description:"Break complex tasks into simple steps and execute them one at a time.",
+  start_url:"./",
+  display:"standalone",
+  background_color:"#f9fafb",
+  theme_color:"#3b82f6",
+  icons:[{src:"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='80' fill='%233b82f6'/><text x='256' y='350' text-anchor='middle' font-size='300' fill='white'>✓</text></svg>",sizes:"512x512",type:"image/svg+xml",purpose:"any maskable"}]
+});
+const mblob=new Blob([manifest],{type:"application/json"});
+const mlink=document.createElement("link");
+mlink.rel="manifest";
+mlink.href=URL.createObjectURL(mblob);
+document.head.appendChild(mlink);
+
+// --- Service Worker (inline via blob) ---
+const swCode=`
+const CACHE='operationalize-v1';
+const ASSETS=['./'];
+self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)));self.skipWaiting()});
+self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));self.clients.claim()});
+self.addEventListener('fetch',e=>{e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).then(nr=>{if(nr.ok){const c=nr.clone();caches.open(CACHE).then(cache=>cache.put(e.request,c))}return nr}).catch(()=>caches.match('./'))))});
+`;
+if('serviceWorker' in navigator){
+  const swblob=new Blob([swCode],{type:'application/javascript'});
+  navigator.serviceWorker.register(URL.createObjectURL(swblob)).catch(()=>{});
+}
+</script>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
+<script>
+"use strict";
+const{useState,useEffect,useRef,useCallback}=React;
+const e=React.createElement;
+
+// --- Storage (localStorage) ---
+const LS_KEY="operationalize-tasks";
+function loadTasks(){try{const d=localStorage.getItem(LS_KEY);return d?JSON.parse(d):[];}catch(e){return[];}}
+function saveTasks(t){try{localStorage.setItem(LS_KEY,JSON.stringify(t));}catch(e){}}
+
+// --- Utilities ---
+const uid=()=>Math.random().toString(36).slice(2,11);
+
+function playChime(){
+  try{
+    const ctx=new(window.AudioContext||window.webkitAudioContext)();
+    [523.25,659.25,783.99].forEach((freq,i)=>{
+      const o=ctx.createOscillator(),g=ctx.createGain();
+      o.type="sine";o.frequency.value=freq;
+      g.gain.setValueAtTime(0.2,ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+1.2);
+      o.connect(g);g.connect(ctx.destination);
+      o.start(ctx.currentTime+i*0.13);o.stop(ctx.currentTime+1.2);
+    });
+  }catch(e){}
+}
+
+const isComplete=t=>{if(!t.subtasks||!t.subtasks.length)return t.completed;return t.subtasks.every(s=>isComplete(s));};
+const leafCount=t=>{if(!t.subtasks||!t.subtasks.length)return 1;return t.subtasks.reduce((s,c)=>s+leafCount(c),0);};
+const doneLeafCount=t=>{if(!t.subtasks||!t.subtasks.length)return t.completed?1:0;return t.subtasks.reduce((s,c)=>s+doneLeafCount(c),0);};
+
+function findLeafWithPath(subtasks,path=[]){
+  for(const t of subtasks){
+    const p=[...path,t.title];
+    if(t.subtasks&&t.subtasks.length){const r=findLeafWithPath(t.subtasks,p);if(r)return r;}
+    else if(!t.completed)return{task:t,path:p};
+  }
+  return null;
+}
+
+const deepMark=(arr,id)=>arr.map(t=>t.id===id?{...t,completed:true}:t.subtasks?.length?{...t,subtasks:deepMark(t.subtasks,id)}:t);
+const deepAdd=(arr,pid,child)=>arr.map(t=>t.id===pid?{...t,subtasks:[...(t.subtasks||[]),child]}:t.subtasks?.length?{...t,subtasks:deepAdd(t.subtasks,pid,child)}:t);
+const deepRemove=(arr,id)=>arr.filter(t=>t.id!==id).map(t=>t.subtasks?.length?{...t,subtasks:deepRemove(t.subtasks,id)}:t);
+const deepRename=(arr,id,title)=>arr.map(t=>t.id===id?{...t,title}:t.subtasks?.length?{...t,subtasks:deepRename(t.subtasks,id,title)}:t);
+const deepResetAll=arr=>arr.map(t=>({...t,completed:false,subtasks:t.subtasks?.length?deepResetAll(t.subtasks):[]}));
+
+// --- Icon components ---
+function ChevronIcon({open}){
+  return e("svg",{width:20,height:20,viewBox:"0 0 20 20",fill:"none",style:{transform:open?"rotate(90deg)":"rotate(0deg)",transition:"transform 0.2s"}},
+    e("path",{d:"M7 5l5 5-5 5",stroke:"currentColor",strokeWidth:2,strokeLinecap:"round",strokeLinejoin:"round"}));
+}
+
+function CheckCircle({checked,size=22}){
+  return e("svg",{width:size,height:size,viewBox:"0 0 22 22",fill:"none"},
+    e("circle",{cx:11,cy:11,r:10,stroke:checked?"#22c55e":"#d1d5db",strokeWidth:2,fill:checked?"#22c55e":"none"}),
+    checked&&e("path",{d:"M6 11l3 3 7-7",stroke:"white",strokeWidth:2,strokeLinecap:"round",strokeLinejoin:"round"}));
+}
+
+function BigCheck(){
+  return e("svg",{width:120,height:120,viewBox:"0 0 120 120",fill:"none"},
+    e("circle",{cx:60,cy:60,r:56,stroke:"#22c55e",strokeWidth:6,fill:"#22c55e",fillOpacity:0.1}),
+    e("path",{d:"M32 62l18 18 38-40",stroke:"#22c55e",strokeWidth:7,strokeLinecap:"round",strokeLinejoin:"round"}));
+}
+
+// --- SubtaskNode ---
+function SubtaskNode({task,depth,onAdd,onRemove,onRename,expanded,toggleExpand}){
+  const[editing,setEditing]=useState(!task.title);
+  const[val,setVal]=useState(task.title);
+  const inputRef=useRef(null);
+  const hasSubs=task.subtasks&&task.subtasks.length>0;
+  const done=isComplete(task);
+  const isOpen=expanded[task.id];
+
+  useEffect(()=>{if(editing&&inputRef.current)inputRef.current.focus();},[editing]);
+
+  const commit=()=>{const t=val.trim();if(t){onRename(task.id,t);setEditing(false);}else{onRemove(task.id);}};
+
+  const total=leafCount(task),doneCount=doneLeafCount(task);
+
+  return e("div",{style:{marginLeft:depth>0?20:0}},
+    e("div",{style:{display:"flex",alignItems:"center",gap:8,padding:"8px 4px",borderBottom:"1px solid #f3f4f6",opacity:done?0.5:1,minHeight:44}},
+      hasSubs?
+        e("button",{onClick:()=>toggleExpand(task.id),style:{background:"none",border:"none",padding:2,cursor:"pointer",color:"#6b7280",flexShrink:0}},e(ChevronIcon,{open:isOpen})):
+        e("div",{style:{width:24,display:"flex",justifyContent:"center",flexShrink:0}},e(CheckCircle,{checked:done})),
+      editing?
+        e("input",{ref:inputRef,value:val,onChange:ev=>setVal(ev.target.value),onBlur:commit,onKeyDown:ev=>{if(ev.key==="Enter")commit();if(ev.key==="Escape"){if(!task.title)onRemove(task.id);else{setVal(task.title);setEditing(false);}}},placeholder:"Step name...",style:{flex:1,fontSize:15,padding:"4px 8px",border:"1px solid #d1d5db",borderRadius:6,outline:"none",fontFamily:"inherit"}}):
+        e("span",{onClick:()=>{setVal(task.title);setEditing(true);},style:{flex:1,fontSize:15,cursor:"pointer",textDecoration:done?"line-through":"none",color:done?"#9ca3af":"#1f2937",lineHeight:1.4}},
+          task.title,
+          hasSubs&&e("span",{style:{fontSize:12,color:"#9ca3af",marginLeft:8}},doneCount+"/"+total)),
+      e("button",{onClick:()=>onAdd(task.id),title:"Add sub-step",style:{background:"none",border:"none",fontSize:20,color:"#3b82f6",cursor:"pointer",padding:"2px 6px",flexShrink:0,lineHeight:1}},"+"),
+      e("button",{onClick:()=>onRemove(task.id),title:"Delete",style:{background:"none",border:"none",fontSize:16,color:"#ef4444",cursor:"pointer",padding:"2px 6px",flexShrink:0,lineHeight:1}},"✕")
+    ),
+    hasSubs&&isOpen&&task.subtasks.map(s=>e(SubtaskNode,{key:s.id,task:s,depth:depth+1,onAdd,onRemove,onRename,expanded,toggleExpand}))
+  );
+}
+
+// --- TaskTitle ---
+function TaskTitle({title,onRename}){
+  const[editing,setEditing]=useState(!title);
+  const[val,setVal]=useState(title);
+  const ref=useRef(null);
+
+  useEffect(()=>{if(editing&&ref.current)ref.current.focus();},[editing]);
+  useEffect(()=>{setVal(title);},[title]);
+
+  const commit=()=>{const t=val.trim();if(t){onRename(t);setEditing(false);}};
+
+  return editing?
+    e("input",{ref,value:val,onChange:ev=>setVal(ev.target.value),onBlur:commit,onKeyDown:ev=>{if(ev.key==="Enter")commit();},placeholder:"Task name...",style:{fontSize:22,fontWeight:700,border:"none",borderBottom:"2px solid #3b82f6",padding:"8px 0",width:"100%",outline:"none",background:"transparent",fontFamily:"inherit",marginBottom:8}}):
+    e("h2",{onClick:()=>{setVal(title);setEditing(true);},style:{fontSize:22,fontWeight:700,margin:"0 0 8px",cursor:"pointer",color:"#1f2937"}},title||"Untitled Task");
+}
+
+// --- Main App ---
+function App(){
+  const[tasks,setTasks]=useState(loadTasks);
+  const[screen,setScreen]=useState("home");
+  const[selId,setSelId]=useState(null);
+  const[showMenu,setShowMenu]=useState(false);
+  const[execPhase,setExecPhase]=useState("showing");
+  const[expanded,setExpanded]=useState({});
+  const[dragIdx,setDragIdx]=useState(null);
+  const[dragOverIdx,setDragOverIdx]=useState(null);
+  const[deleteConfirm,setDeleteConfirm]=useState(false);
+  const[resetConfirm,setResetConfirm]=useState(false);
+  const holdTimer=useRef(null);
+  const startYRef=useRef(0);
+  const fileRef=useRef(null);
+  const touchDragIdxRef=useRef(null);
+  const touchItemRefs=useRef([]);
+  const[touchDragging,setTouchDragging]=useState(false);
+  const[touchOverIdx,setTouchOverIdx]=useState(null);
+
+  useEffect(()=>{saveTasks(tasks);},[tasks]);
+
+  const selTask=tasks.find(t=>t.id===selId);
+
+  const toggleExpand=useCallback(id=>{setExpanded(p=>({...p,[id]:!p[id]}));},[]);
+
+  // Home handlers
+  const addMainTask=()=>{const id=uid();setTasks(p=>[...p,{id,title:"",subtasks:[],completed:false}]);setSelId(id);setScreen("detail");};
+  const openTask=id=>{setSelId(id);setScreen("detail");};
+
+  // Drag reorder
+  const onDragStart=(ev,idx)=>{ev.dataTransfer.effectAllowed="move";setDragIdx(idx);};
+  const onDragOver=(ev,idx)=>{ev.preventDefault();setDragOverIdx(idx);};
+  const onDragEnd=()=>{if(dragIdx!==null&&dragOverIdx!==null&&dragIdx!==dragOverIdx){setTasks(p=>{const n=[...p];const[m]=n.splice(dragIdx,1);n.splice(dragOverIdx,0,m);return n;});}setDragIdx(null);setDragOverIdx(null);};
+
+  // Touch reorder
+  const onTouchStart=(ev,idx)=>{startYRef.current=ev.touches[0].clientY;holdTimer.current=setTimeout(()=>{touchDragIdxRef.current=idx;setTouchDragging(true);setTouchOverIdx(idx);if(navigator.vibrate)navigator.vibrate(30);},400);};
+  const onTouchMove=(ev)=>{if(!touchDragging){if(Math.abs(ev.touches[0].clientY-startYRef.current)>8)clearTimeout(holdTimer.current);return;}const y=ev.touches[0].clientY;for(let i=0;i<touchItemRefs.current.length;i++){const el=touchItemRefs.current[i];if(!el)continue;const rect=el.getBoundingClientRect();if(y>=rect.top&&y<=rect.bottom){setTouchOverIdx(i);break;}}};
+  const onTouchEnd=()=>{clearTimeout(holdTimer.current);if(touchDragging&&touchDragIdxRef.current!==null&&touchOverIdx!==null&&touchDragIdxRef.current!==touchOverIdx){setTasks(p=>{const n=[...p];const[m]=n.splice(touchDragIdxRef.current,1);n.splice(touchOverIdx,0,m);return n;});}touchDragIdxRef.current=null;setTouchDragging(false);setTouchOverIdx(null);};
+
+  // Detail handlers
+  const updateSelTask=updater=>{setTasks(p=>p.map(t=>t.id===selId?updater(t):t));};
+  const addSubtask=parentId=>{const child={id:uid(),title:"",subtasks:[],completed:false};if(parentId===selId){updateSelTask(t=>({...t,subtasks:[...t.subtasks,child]}));}else{updateSelTask(t=>({...t,subtasks:deepAdd(t.subtasks,parentId,child)}));}setExpanded(p=>({...p,[parentId]:true}));};
+  const removeSubtask=id=>{updateSelTask(t=>({...t,subtasks:deepRemove(t.subtasks,id)}));};
+  const renameSubtask=(id,title)=>{updateSelTask(t=>({...t,subtasks:deepRename(t.subtasks,id,title)}));};
+  const renameMainTask=title=>{updateSelTask(t=>({...t,title}));};
+  const deleteMainTask=()=>{setTasks(p=>p.filter(t=>t.id!==selId));setScreen("home");setSelId(null);setDeleteConfirm(false);};
+  const resetProgress=()=>{updateSelTask(t=>({...t,completed:false,subtasks:deepResetAll(t.subtasks)}));setResetConfirm(false);};
+
+  // Exec
+  const completeLeaf=leafId=>{updateSelTask(t=>({...t,subtasks:deepMark(t.subtasks,leafId)}));playChime();setExecPhase("completing");setTimeout(()=>setExecPhase("fading"),900);setTimeout(()=>setExecPhase("showing"),1400);};
+
+  // Export/Import
+  const doExport=()=>{const blob=new Blob([JSON.stringify(tasks,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="operationalize-backup.json";a.click();URL.revokeObjectURL(url);setShowMenu(false);};
+  const doImport=ev=>{const f=ev.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=re=>{try{const data=JSON.parse(re.target.result);if(Array.isArray(data)){setTasks(data);setShowMenu(false);}}catch(e){alert("Invalid file format");}};r.readAsText(f);ev.target.value="";};
+
+  // Styles
+  const headerStyle={display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px",borderBottom:"1px solid #e5e7eb",background:"white",position:"sticky",top:0,zIndex:20};
+  const btnPrimary={background:"#3b82f6",color:"white",border:"none",borderRadius:12,padding:"14px 24px",fontSize:16,fontWeight:600,cursor:"pointer",width:"100%"};
+  const btnDanger={background:"none",color:"#ef4444",border:"2px solid #ef4444",borderRadius:12,padding:"12px 24px",fontSize:15,fontWeight:600,cursor:"pointer",width:"100%"};
+
+  // ── HOME ──
+  if(screen==="home"){
+    return e("div",{style:{minHeight:"100dvh",background:"#f9fafb",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column"}},
+      e("div",{style:headerStyle},
+        e("h1",{style:{fontSize:22,fontWeight:700,margin:0,color:"#1f2937"}},"Operationalize"),
+        e("div",{style:{position:"relative"}},
+          e("button",{onClick:()=>setShowMenu(!showMenu),style:{background:"none",border:"none",fontSize:22,cursor:"pointer",padding:8}},"⋮"),
+          showMenu&&e("div",{style:{position:"absolute",right:0,top:40,background:"white",borderRadius:12,boxShadow:"0 4px 24px rgba(0,0,0,0.12)",padding:8,zIndex:30,minWidth:160}},
+            e("button",{onClick:doExport,style:{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",border:"none",background:"none",fontSize:15,cursor:"pointer",borderRadius:8}},"Export Data"),
+            e("button",{onClick:()=>fileRef.current?.click(),style:{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",border:"none",background:"none",fontSize:15,cursor:"pointer",borderRadius:8}},"Import Data"),
+            e("input",{ref:fileRef,type:"file",accept:".json",onChange:doImport,style:{display:"none"}})))),
+      showMenu&&e("div",{onClick:()=>setShowMenu(false),style:{position:"fixed",inset:0,zIndex:10}}),
+      e("div",{style:{padding:"12px 16px"}},
+        e("button",{onClick:addMainTask,style:{...btnPrimary,display:"flex",alignItems:"center",justifyContent:"center",gap:8}},
+          e("span",{style:{fontSize:22,lineHeight:1}},"+")," New Task")),
+      e("div",{style:{flex:1,overflowY:"auto",padding:"0 16px 24px"}},
+        tasks.length===0&&e("div",{style:{textAlign:"center",padding:"60px 20px",color:"#9ca3af"}},
+          e("div",{style:{fontSize:40,marginBottom:12}},"📋"),
+          e("div",{style:{fontSize:16}},"No tasks yet. Add one to get started!")),
+        tasks.map((t,i)=>{
+          const done=isComplete(t),total=leafCount(t),doneC=doneLeafCount(t),hasSubs=t.subtasks?.length>0;
+          const pct=hasSubs?Math.round((doneC/total)*100):0;
+          const isDragOver=(dragOverIdx===i&&dragIdx!==null&&dragIdx!==i)||(touchOverIdx===i&&touchDragging&&touchDragIdxRef.current!==i);
+          return e("div",{key:t.id,ref:el=>(touchItemRefs.current[i]=el),draggable:true,
+            onDragStart:ev=>onDragStart(ev,i),onDragOver:ev=>onDragOver(ev,i),onDragEnd,
+            onTouchStart:ev=>onTouchStart(ev,i),onTouchMove:ev=>onTouchMove(ev),onTouchEnd,
+            onClick:()=>t.title&&openTask(t.id),
+            style:{background:"white",borderRadius:12,padding:"16px 18px",marginBottom:8,
+              boxShadow:dragIdx===i||(touchDragging&&touchDragIdxRef.current===i)?"0 4px 16px rgba(0,0,0,0.15)":"0 1px 3px rgba(0,0,0,0.06)",
+              cursor:"pointer",userSelect:"none",borderLeft:isDragOver?"3px solid #3b82f6":"3px solid transparent",
+              opacity:done?0.6:1,transform:dragIdx===i?"scale(1.02)":"scale(1)",transition:"box-shadow 0.2s, transform 0.2s, border 0.15s"}},
+            e("div",{style:{display:"flex",alignItems:"center",gap:10}},
+              e(CheckCircle,{checked:done,size:24}),
+              e("div",{style:{flex:1,minWidth:0}},
+                e("div",{style:{fontSize:16,fontWeight:600,color:done?"#9ca3af":"#1f2937",textDecoration:done?"line-through":"none",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},t.title||"Untitled Task"),
+                hasSubs&&e("div",{style:{marginTop:6}},
+                  e("div",{style:{display:"flex",justifyContent:"space-between",fontSize:12,color:"#9ca3af",marginBottom:3}},
+                    e("span",null,doneC+" of "+total+" steps"),e("span",null,pct+"%")),
+                  e("div",{style:{height:4,background:"#f3f4f6",borderRadius:2,overflow:"hidden"}},
+                    e("div",{style:{height:"100%",width:pct+"%",background:done?"#22c55e":"#3b82f6",borderRadius:2,transition:"width 0.3s"}})))),
+              e("span",{style:{color:"#d1d5db",fontSize:18}},"›")));
+        })));
+  }
+
+  // ── DETAIL ──
+  if(screen==="detail"&&selTask){
+    const total=leafCount(selTask),doneC=doneLeafCount(selTask),hasSubs=selTask.subtasks?.length>0,allDone=hasSubs&&isComplete(selTask);
+    return e("div",{style:{minHeight:"100dvh",background:"#f9fafb",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column"}},
+      e("div",{style:headerStyle},
+        e("button",{onClick:()=>{setScreen("home");setSelId(null);},style:{background:"none",border:"none",fontSize:20,cursor:"pointer",padding:8}},"←"),
+        e("span",{style:{fontSize:16,fontWeight:600,color:"#1f2937",flex:1,textAlign:"center",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},"Task Details"),
+        e("div",{style:{width:40}})),
+      e("div",{style:{flex:1,overflowY:"auto",padding:"16px 16px 120px"}},
+        e(TaskTitle,{title:selTask.title,onRename:renameMainTask}),
+        hasSubs&&e("div",{style:{margin:"12px 0 16px",padding:"10px 14px",background:"white",borderRadius:10,boxShadow:"0 1px 3px rgba(0,0,0,0.06)"}},
+          e("div",{style:{display:"flex",justifyContent:"space-between",fontSize:13,color:"#6b7280",marginBottom:4}},
+            e("span",null,doneC+" of "+total+" steps done"),e("span",null,Math.round((doneC/total)*100)+"%")),
+          e("div",{style:{height:6,background:"#f3f4f6",borderRadius:3,overflow:"hidden"}},
+            e("div",{style:{height:"100%",width:(doneC/total)*100+"%",background:allDone?"#22c55e":"#3b82f6",borderRadius:3,transition:"width 0.3s"}}))),
+        e("button",{onClick:()=>addSubtask(selId),style:{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"#eff6ff",borderRadius:10,border:"1px dashed #93c5fd",color:"#3b82f6",fontSize:15,fontWeight:500,cursor:"pointer",width:"100%",marginBottom:8}},
+          e("span",{style:{fontSize:20,lineHeight:1}},"+")," Add Step"),
+        e("div",{style:{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.06)",padding:"4px 12px",marginBottom:16}},
+          selTask.subtasks?.length===0&&e("div",{style:{textAlign:"center",padding:"24px 12px",color:"#9ca3af",fontSize:14}},"Break this task down into smaller steps"),
+          selTask.subtasks?.map(s=>e(SubtaskNode,{key:s.id,task:s,depth:0,onAdd:addSubtask,onRemove:removeSubtask,onRename:renameSubtask,expanded,toggleExpand}))),
+        hasSubs&&doneC>0&&!resetConfirm&&e("button",{onClick:()=>setResetConfirm(true),style:{...btnDanger,background:"none",color:"#f59e0b",borderColor:"#f59e0b",marginBottom:12}},"Reset Progress"),
+        resetConfirm&&e("div",{style:{background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:12,padding:16,marginBottom:12}},
+          e("div",{style:{fontSize:15,fontWeight:600,color:"#92400e",marginBottom:8}},"Reset all progress?"),
+          e("div",{style:{fontSize:14,color:"#a16207",marginBottom:12}},"This will uncheck all completed steps."),
+          e("div",{style:{display:"flex",gap:8}},
+            e("button",{onClick:()=>setResetConfirm(false),style:{flex:1,padding:"10px",border:"1px solid #d1d5db",borderRadius:8,background:"white",cursor:"pointer",fontSize:14}},"Cancel"),
+            e("button",{onClick:resetProgress,style:{flex:1,padding:"10px",border:"none",borderRadius:8,background:"#f59e0b",color:"white",cursor:"pointer",fontSize:14,fontWeight:600}},"Reset"))),
+        !deleteConfirm?
+          e("button",{onClick:()=>setDeleteConfirm(true),style:btnDanger},"Delete Task"):
+          e("div",{style:{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:12,padding:16}},
+            e("div",{style:{fontSize:15,fontWeight:600,color:"#991b1b",marginBottom:8}},"Delete this entire task?"),
+            e("div",{style:{fontSize:14,color:"#b91c1c",marginBottom:12}},"This will permanently remove the task and all its steps."),
+            e("div",{style:{display:"flex",gap:8}},
+              e("button",{onClick:()=>setDeleteConfirm(false),style:{flex:1,padding:"10px",border:"1px solid #d1d5db",borderRadius:8,background:"white",cursor:"pointer",fontSize:14}},"Cancel"),
+              e("button",{onClick:deleteMainTask,style:{flex:1,padding:"10px",border:"none",borderRadius:8,background:"#ef4444",color:"white",cursor:"pointer",fontSize:14,fontWeight:600}},"Delete")))),
+      hasSubs&&!allDone&&e("div",{style:{position:"fixed",bottom:0,left:0,right:0,padding:"12px 16px",background:"linear-gradient(transparent, #f9fafb 20%)",maxWidth:480,margin:"0 auto"}},
+        e("button",{onClick:()=>{setScreen("execute");setExecPhase("showing");},style:{...btnPrimary,background:"#22c55e",fontSize:17,padding:16,borderRadius:14}},"▶ Execute")),
+      hasSubs&&allDone&&e("div",{style:{position:"fixed",bottom:0,left:0,right:0,padding:"12px 16px",background:"linear-gradient(transparent, #f9fafb 20%)",maxWidth:480,margin:"0 auto",textAlign:"center"}},
+        e("div",{style:{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:14,padding:16,fontSize:16,fontWeight:600,color:"#16a34a"}},"✓ All steps completed!")));
+  }
+
+  // ── EXECUTE ──
+  if(screen==="execute"&&selTask){
+    const leafInfo=findLeafWithPath(selTask.subtasks);
+    const allDone=!leafInfo;
+    return e("div",{style:{minHeight:"100dvh",background:"#111827",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",color:"white"}},
+      e("div",{style:{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 24px 100px"}},
+        allDone?
+          e("div",{style:{textAlign:"center",animation:"fadeIn 0.5s ease"}},
+            e("div",{style:{fontSize:60,marginBottom:16}},"🎉"),
+            e("div",{style:{fontSize:26,fontWeight:700,marginBottom:8}},"All Done!"),
+            e("div",{style:{fontSize:16,color:"#9ca3af"}},"Every step has been completed.")):
+          e("div",{onClick:()=>execPhase==="showing"&&completeLeaf(leafInfo.task.id),style:{textAlign:"center",cursor:execPhase==="showing"?"pointer":"default",opacity:execPhase==="fading"?0:1,transition:"opacity 0.4s ease",width:"100%"}},
+            execPhase==="completing"?
+              e("div",{style:{animation:"scaleIn 0.4s ease",display:"flex",justifyContent:"center",width:"100%"}},e(BigCheck)):
+              e(React.Fragment,null,
+                e("div",{style:{fontSize:13,color:"#6b7280",marginBottom:20,lineHeight:1.5}},leafInfo.path.slice(0,-1).join(" › ")),
+                e("div",{style:{fontSize:28,fontWeight:700,lineHeight:1.3,marginBottom:24,padding:"32px 20px",background:"rgba(255,255,255,0.06)",borderRadius:20,border:"1px solid rgba(255,255,255,0.1)"}},leafInfo.task.title),
+                e("div",{style:{fontSize:14,color:"#6b7280"}},"Tap to complete")))),
+      e("div",{style:{padding:"16px 20px",borderTop:"1px solid rgba(255,255,255,0.1)"}},
+        e("button",{onClick:()=>{setScreen("detail");setDeleteConfirm(false);setResetConfirm(false);},style:{width:"100%",padding:14,background:"rgba(255,255,255,0.1)",color:"white",border:"none",borderRadius:12,fontSize:16,fontWeight:500,cursor:"pointer"}},"Return")));
+  }
+  return null;
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(e(App));
+</script>
+</body>
+</html>
