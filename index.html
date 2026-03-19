@@ -19,7 +19,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-
 <script>
 const manifest=JSON.stringify({name:"Operationalize",short_name:"Operate",description:"Break complex tasks into simple steps and execute them one at a time.",start_url:"./",display:"standalone",background_color:"#f9fafb",theme_color:"#3b82f6",icons:[{src:"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='80' fill='%233b82f6'/><text x='256' y='350' text-anchor='middle' font-size='300' fill='white'>✓</text></svg>",sizes:"512x512",type:"image/svg+xml",purpose:"any maskable"}]});
 const mblob=new Blob([manifest],{type:"application/json"});const mlink=document.createElement("link");mlink.rel="manifest";mlink.href=URL.createObjectURL(mblob);document.head.appendChild(mlink);
-const swCode=`const CACHE='operationalize-v1';const ASSETS=['./'];self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)));self.skipWaiting()});self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));self.clients.claim()});self.addEventListener('fetch',e=>{e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).then(nr=>{if(nr.ok){const c=nr.clone();caches.open(CACHE).then(cache=>cache.put(e.request,c))}return nr}).catch(()=>caches.match('./'))))});`;
+const swCode=`const CACHE='operationalize-v3';const ASSETS=['./'];self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)));self.skipWaiting()});self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));self.clients.claim()});self.addEventListener('fetch',e=>{e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).then(nr=>{if(nr.ok){const c=nr.clone();caches.open(CACHE).then(cache=>cache.put(e.request,c))}return nr}).catch(()=>caches.match('./'))))});`;
 if('serviceWorker' in navigator){const swblob=new Blob([swCode],{type:'application/javascript'});navigator.serviceWorker.register(URL.createObjectURL(swblob)).catch(()=>{});}
 </script>
 </head>
@@ -35,102 +35,121 @@ const h=React.createElement;
 const LS_KEY="operationalize-tasks";
 function loadTasks(){try{const d=localStorage.getItem(LS_KEY);return d?JSON.parse(d):[];}catch(e){return[];}}
 function saveTasks(t){try{localStorage.setItem(LS_KEY,JSON.stringify(t));}catch(e){}}
-
 const uid=()=>Math.random().toString(36).slice(2,11);
-
 function playChime(){try{const ctx=new(window.AudioContext||window.webkitAudioContext)();[523.25,659.25,783.99].forEach((freq,i)=>{const o=ctx.createOscillator(),g=ctx.createGain();o.type="sine";o.frequency.value=freq;g.gain.setValueAtTime(0.2,ctx.currentTime);g.gain.exponentialRampToValueAtTime(0.001,ctx.currentTime+1.2);o.connect(g);g.connect(ctx.destination);o.start(ctx.currentTime+i*0.13);o.stop(ctx.currentTime+1.2);});}catch(e){}}
 
 const isComplete=t=>{if(!t.subtasks||!t.subtasks.length)return t.completed;return t.subtasks.every(s=>isComplete(s));};
 const leafCount=t=>{if(!t.subtasks||!t.subtasks.length)return 1;return t.subtasks.reduce((s,c)=>s+leafCount(c),0);};
 const doneLeafCount=t=>{if(!t.subtasks||!t.subtasks.length)return t.completed?1:0;return t.subtasks.reduce((s,c)=>s+doneLeafCount(c),0);};
-function findLeafWithPath(subtasks,path=[]){for(const t of subtasks){const p=[...path,t.title];if(t.subtasks&&t.subtasks.length){const r=findLeafWithPath(t.subtasks,p);if(r)return r;}else if(!t.completed)return{task:t,path:p};}return null;}
-
+function findLeafWithPath(sub,path=[]){for(const t of sub){const p=[...path,t.title];if(t.subtasks&&t.subtasks.length){const r=findLeafWithPath(t.subtasks,p);if(r)return r;}else if(!t.completed)return{task:t,path:p};}return null;}
 const deepMark=(arr,id)=>arr.map(t=>t.id===id?{...t,completed:true}:t.subtasks?.length?{...t,subtasks:deepMark(t.subtasks,id)}:t);
 const deepAdd=(arr,pid,child)=>arr.map(t=>t.id===pid?{...t,subtasks:[...(t.subtasks||[]),child]}:t.subtasks?.length?{...t,subtasks:deepAdd(t.subtasks,pid,child)}:t);
 const deepRemove=(arr,id)=>arr.filter(t=>t.id!==id).map(t=>t.subtasks?.length?{...t,subtasks:deepRemove(t.subtasks,id)}:t);
 const deepRename=(arr,id,title)=>arr.map(t=>t.id===id?{...t,title}:t.subtasks?.length?{...t,subtasks:deepRename(t.subtasks,id,title)}:t);
 const deepReorder=(arr,pid,from,to)=>arr.map(t=>{if(t.id===pid){const ns=[...t.subtasks];const[m]=ns.splice(from,1);ns.splice(to,0,m);return{...t,subtasks:ns};}return t.subtasks?.length?{...t,subtasks:deepReorder(t.subtasks,pid,from,to)}:t;});
 const deepResetAll=arr=>arr.map(t=>({...t,completed:false,subtasks:t.subtasks?.length?deepResetAll(t.subtasks):[]}));
+const setAllComplete=(t,val)=>({...t,completed:val,subtasks:t.subtasks?.length?t.subtasks.map(s=>setAllComplete(s,val)):(t.subtasks||[])});
+const deepToggleComplete=(arr,id)=>arr.map(t=>{if(t.id===id)return setAllComplete(t,!isComplete(t));return t.subtasks?.length?{...t,subtasks:deepToggleComplete(t.subtasks,id)}:t;});
 
 function ChevronIcon({open}){return h("svg",{width:20,height:20,viewBox:"0 0 20 20",fill:"none",style:{transform:open?"rotate(90deg)":"rotate(0deg)",transition:"transform 0.2s"}},h("path",{d:"M7 5l5 5-5 5",stroke:"currentColor",strokeWidth:2,strokeLinecap:"round",strokeLinejoin:"round"}));}
-function CheckCircle({checked,size=22}){return h("svg",{width:size,height:size,viewBox:"0 0 22 22",fill:"none"},h("circle",{cx:11,cy:11,r:10,stroke:checked?"#22c55e":"#d1d5db",strokeWidth:2,fill:checked?"#22c55e":"none"}),checked&&h("path",{d:"M6 11l3 3 7-7",stroke:"white",strokeWidth:2,strokeLinecap:"round",strokeLinejoin:"round"}));}
+function CheckCircle({checked,partial,size=22,onClick}){return h("svg",{width:size,height:size,viewBox:"0 0 22 22",fill:"none",onClick,style:{cursor:onClick?"pointer":"default",flexShrink:0}},h("circle",{cx:11,cy:11,r:10,stroke:checked?"#22c55e":partial?"#f59e0b":"#d1d5db",strokeWidth:2,fill:checked?"#22c55e":"none"}),checked&&h("path",{d:"M6 11l3 3 7-7",stroke:"white",strokeWidth:2,strokeLinecap:"round",strokeLinejoin:"round"}),partial&&!checked&&h("rect",{x:7,y:10,width:8,height:2,rx:1,fill:"#f59e0b"}));}
 function BigCheck(){return h("svg",{width:120,height:120,viewBox:"0 0 120 120",fill:"none"},h("circle",{cx:60,cy:60,r:56,stroke:"#22c55e",strokeWidth:6,fill:"#22c55e",fillOpacity:0.1}),h("path",{d:"M32 62l18 18 38-40",stroke:"#22c55e",strokeWidth:7,strokeLinecap:"round",strokeLinejoin:"round"}));}
+function GripIcon(){return h("svg",{width:12,height:18,viewBox:"0 0 12 18",fill:"none"},h("circle",{cx:3,cy:3,r:1.5,fill:"#b0b5bf"}),h("circle",{cx:9,cy:3,r:1.5,fill:"#b0b5bf"}),h("circle",{cx:3,cy:9,r:1.5,fill:"#b0b5bf"}),h("circle",{cx:9,cy:9,r:1.5,fill:"#b0b5bf"}),h("circle",{cx:3,cy:15,r:1.5,fill:"#b0b5bf"}),h("circle",{cx:9,cy:15,r:1.5,fill:"#b0b5bf"}));}
 
-const arrowBtn=en=>({background:"none",border:"none",fontSize:10,padding:"0 4px",lineHeight:1,color:en?"#6b7280":"#e5e7eb",cursor:en?"pointer":"default"});
+function SubtaskGroup({tasks,parentId,depth,onAdd,onRemove,onRename,onReorder,onToggle,expanded,toggleExpand}){
+  const[dragIdx,setDragIdx]=useState(null);
+  const[overIdx,setOverIdx]=useState(null);
+  const itemRefs=useRef([]);
+  const holdTimer=useRef(null);
+  const startYRef=useRef(0);
+  const draggingRef=useRef(false);
+  const dragIdxRef=useRef(null);
+  const overIdxRef=useRef(null);
 
-function SubtaskNode({task,depth,onAdd,onRemove,onRename,onReorder,expanded,toggleExpand,parentId,index,siblingCount}){
+  useEffect(()=>{
+    const onMove=e=>{
+      const y=e.touches?e.touches[0].clientY:e.clientY;
+      if(!draggingRef.current){if(holdTimer.current&&Math.abs(y-startYRef.current)>8){clearTimeout(holdTimer.current);holdTimer.current=null;}return;}
+      if(e.cancelable)e.preventDefault();
+      for(let i=0;i<itemRefs.current.length;i++){const el=itemRefs.current[i];if(!el)continue;const r=el.getBoundingClientRect();if(y>=r.top&&y<=r.bottom){if(overIdxRef.current!==i){overIdxRef.current=i;setOverIdx(i);}break;}}
+    };
+    const onEnd=()=>{
+      clearTimeout(holdTimer.current);holdTimer.current=null;
+      if(draggingRef.current&&dragIdxRef.current!==null&&overIdxRef.current!==null&&dragIdxRef.current!==overIdxRef.current){onReorder(parentId,dragIdxRef.current,overIdxRef.current);}
+      draggingRef.current=false;dragIdxRef.current=null;overIdxRef.current=null;setDragIdx(null);setOverIdx(null);
+    };
+    document.addEventListener("touchmove",onMove,{passive:false});document.addEventListener("touchend",onEnd);
+    document.addEventListener("mousemove",onMove);document.addEventListener("mouseup",onEnd);
+    return()=>{document.removeEventListener("touchmove",onMove);document.removeEventListener("touchend",onEnd);document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onEnd);};
+  },[parentId,onReorder]);
+
+  const gripDown=(e,i)=>{e.stopPropagation();const y=e.touches?e.touches[0].clientY:e.clientY;startYRef.current=y;holdTimer.current=setTimeout(()=>{draggingRef.current=true;dragIdxRef.current=i;overIdxRef.current=i;setDragIdx(i);setOverIdx(i);if(navigator.vibrate)navigator.vibrate(30);},200);};
+
+  if(!tasks||!tasks.length)return null;
+  return tasks.map((task,i)=>{
+    const isD=dragIdx===i,isDT=overIdx===i&&dragIdx!==null&&dragIdx!==i;
+    return h("div",{key:task.id,ref:el=>itemRefs.current[i]=el,style:{transition:dragIdx!==null?"none":"transform 0.15s ease",transform:isD?"scale(1.02)":"scale(1)",opacity:isD?0.7:1,position:"relative",zIndex:isD?10:1,borderTop:isDT?"2px solid #3b82f6":"2px solid transparent"}},
+      h(SubtaskNode,{task,depth,index:i,siblingCount:tasks.length,parentId,onGripDown:gripDown,onAdd,onRemove,onRename,onReorder,onToggle,expanded,toggleExpand}));
+  });
+}
+
+function SubtaskNode({task,depth,index,siblingCount,parentId,onGripDown,onAdd,onRemove,onRename,onReorder,onToggle,expanded,toggleExpand}){
   const[editing,setEditing]=useState(!task.title);
   const[val,setVal]=useState(task.title);
   const inputRef=useRef(null);
   const hasSubs=task.subtasks&&task.subtasks.length>0;
   const done=isComplete(task);
+  const partial=hasSubs&&!done&&doneLeafCount(task)>0;
   const isOpen=expanded[task.id];
-  const canUp=index>0,canDown=index<siblingCount-1;
+  const isTL=depth===0;
 
   useEffect(()=>{if(editing&&inputRef.current)inputRef.current.focus();},[editing]);
   const commit=()=>{const t=val.trim();if(t){onRename(task.id,t);setEditing(false);}else{onRemove(task.id);}};
   const total=leafCount(task),doneCount=doneLeafCount(task);
 
-  return h("div",{style:{marginLeft:depth>0?20:0}},
-    h("div",{style:{display:"flex",alignItems:"center",gap:8,padding:"8px 4px",borderBottom:"1px solid #f3f4f6",opacity:done?0.5:1,minHeight:44}},
+  return h("div",{style:{marginLeft:depth>0?16:0,borderLeft:depth>0?"2px solid #e5e7eb":"none",paddingLeft:depth>0?12:0,marginTop:isTL&&index>0?12:0}},
+    h("div",{style:{display:"flex",alignItems:"center",gap:6,padding:isTL?"10px 4px":"8px 4px",borderBottom:isTL?"2px solid #e5e7eb":"1px solid #f3f4f6",opacity:done?0.5:1,minHeight:44,background:isTL?"#f9fafb":"transparent",borderRadius:isTL?6:0,marginBottom:isTL&&isOpen?2:0,WebkitUserSelect:"none",userSelect:"none"}},
+      siblingCount>1&&h("div",{onTouchStart:e=>onGripDown(e,index),onMouseDown:e=>onGripDown(e,index),style:{cursor:"grab",padding:"10px 4px",touchAction:"none",flexShrink:0,display:"flex",alignItems:"center"}},h(GripIcon)),
       hasSubs?
-        h("button",{onClick:()=>toggleExpand(task.id),style:{background:"none",border:"none",padding:2,cursor:"pointer",color:"#6b7280",flexShrink:0}},h(ChevronIcon,{open:isOpen})):
-        h("div",{style:{width:24,display:"flex",justifyContent:"center",flexShrink:0}},h(CheckCircle,{checked:done})),
+        h("div",{style:{display:"flex",alignItems:"center",gap:2,flexShrink:0}},
+          h("button",{onClick:()=>toggleExpand(task.id),style:{background:"none",border:"none",padding:2,cursor:"pointer",color:"#6b7280"}},h(ChevronIcon,{open:isOpen})),
+          h(CheckCircle,{checked:done,partial,onClick:()=>onToggle(task.id)})):
+        h("div",{style:{width:24,display:"flex",justifyContent:"center",flexShrink:0}},h(CheckCircle,{checked:done,onClick:()=>onToggle(task.id)})),
       editing?
         h("input",{ref:inputRef,value:val,onChange:ev=>setVal(ev.target.value),onBlur:commit,onKeyDown:ev=>{if(ev.key==="Enter")commit();if(ev.key==="Escape"){if(!task.title)onRemove(task.id);else{setVal(task.title);setEditing(false);}}},placeholder:"Step name...",style:{flex:1,fontSize:15,padding:"4px 8px",border:"1px solid #d1d5db",borderRadius:6,outline:"none",fontFamily:"inherit"}}):
-        h("span",{onClick:()=>{setVal(task.title);setEditing(true);},style:{flex:1,fontSize:15,cursor:"pointer",textDecoration:done?"line-through":"none",color:done?"#9ca3af":"#1f2937",lineHeight:1.4}},
+        h("span",{onClick:()=>{setVal(task.title);setEditing(true);},style:{flex:1,fontSize:isTL?16:15,fontWeight:isTL?600:400,cursor:"pointer",textDecoration:done?"line-through":"none",color:done?"#9ca3af":"#1f2937",lineHeight:1.4}},
           task.title,
-          hasSubs&&h("span",{style:{fontSize:12,color:"#9ca3af",marginLeft:8}},doneCount+"/"+total)),
-      siblingCount>1&&h("div",{style:{display:"flex",flexDirection:"column",flexShrink:0}},
-        h("button",{onClick:()=>canUp&&onReorder(parentId,index,index-1),disabled:!canUp,style:arrowBtn(canUp)},"▲"),
-        h("button",{onClick:()=>canDown&&onReorder(parentId,index,index+1),disabled:!canDown,style:arrowBtn(canDown)},"▼")),
+          hasSubs&&h("span",{style:{fontSize:12,color:"#9ca3af",marginLeft:8,fontWeight:400}},doneCount+"/"+total)),
       h("button",{onClick:()=>onAdd(task.id),title:"Add sub-step",style:{background:"none",border:"none",fontSize:20,color:"#3b82f6",cursor:"pointer",padding:"2px 6px",flexShrink:0,lineHeight:1}},"+"),
       h("button",{onClick:()=>onRemove(task.id),title:"Delete",style:{background:"none",border:"none",fontSize:16,color:"#ef4444",cursor:"pointer",padding:"2px 6px",flexShrink:0,lineHeight:1}},"✕")),
-    hasSubs&&isOpen&&task.subtasks.map((s,i)=>h(SubtaskNode,{key:s.id,task:s,depth:depth+1,onAdd,onRemove,onRename,onReorder,expanded,toggleExpand,parentId:task.id,index:i,siblingCount:task.subtasks.length})));
+    hasSubs&&isOpen&&h(SubtaskGroup,{tasks:task.subtasks,parentId:task.id,depth:depth+1,onAdd,onRemove,onRename,onReorder,onToggle,expanded,toggleExpand}));
 }
 
 function TaskTitle({title,onRename}){
-  const[editing,setEditing]=useState(!title);
-  const[val,setVal]=useState(title);
-  const ref=useRef(null);
+  const[editing,setEditing]=useState(!title);const[val,setVal]=useState(title);const ref=useRef(null);
   useEffect(()=>{if(editing&&ref.current)ref.current.focus();},[editing]);
   useEffect(()=>{setVal(title);},[title]);
   const commit=()=>{const t=val.trim();if(t){onRename(t);setEditing(false);}};
-  return editing?
-    h("input",{ref,value:val,onChange:ev=>setVal(ev.target.value),onBlur:commit,onKeyDown:ev=>{if(ev.key==="Enter")commit();},placeholder:"Task name...",style:{fontSize:22,fontWeight:700,border:"none",borderBottom:"2px solid #3b82f6",padding:"8px 0",width:"100%",outline:"none",background:"transparent",fontFamily:"inherit",marginBottom:8}}):
-    h("h2",{onClick:()=>{setVal(title);setEditing(true);},style:{fontSize:22,fontWeight:700,margin:"0 0 8px",cursor:"pointer",color:"#1f2937"}},title||"Untitled Task");
+  return editing?h("input",{ref,value:val,onChange:ev=>setVal(ev.target.value),onBlur:commit,onKeyDown:ev=>{if(ev.key==="Enter")commit();},placeholder:"Task name...",style:{fontSize:22,fontWeight:700,border:"none",borderBottom:"2px solid #3b82f6",padding:"8px 0",width:"100%",outline:"none",background:"transparent",fontFamily:"inherit",marginBottom:8}}):h("h2",{onClick:()=>{setVal(title);setEditing(true);},style:{fontSize:22,fontWeight:700,margin:"0 0 8px",cursor:"pointer",color:"#1f2937"}},title||"Untitled Task");
 }
 
 function App(){
-  const[tasks,setTasks]=useState(loadTasks);
-  const[screen,setScreen]=useState("home");
-  const[selId,setSelId]=useState(null);
-  const[showMenu,setShowMenu]=useState(false);
-  const[execPhase,setExecPhase]=useState("showing");
-  const[expanded,setExpanded]=useState({});
-  const[dragIdx,setDragIdx]=useState(null);
-  const[dragOverIdx,setDragOverIdx]=useState(null);
-  const[deleteConfirm,setDeleteConfirm]=useState(false);
-  const[resetConfirm,setResetConfirm]=useState(false);
-  const holdTimer=useRef(null);
-  const startYRef=useRef(0);
-  const fileRef=useRef(null);
-  const touchDragIdxRef=useRef(null);
-  const touchItemRefs=useRef([]);
-  const[touchDragging,setTouchDragging]=useState(false);
-  const[touchOverIdx,setTouchOverIdx]=useState(null);
+  const[tasks,setTasks]=useState(loadTasks);const[screen,setScreen]=useState("home");const[selId,setSelId]=useState(null);
+  const[showMenu,setShowMenu]=useState(false);const[execPhase,setExecPhase]=useState("showing");const[expanded,setExpanded]=useState({});
+  const[dragIdx,setDragIdx]=useState(null);const[dragOverIdx,setDragOverIdx]=useState(null);
+  const[deleteConfirm,setDeleteConfirm]=useState(false);const[resetConfirm,setResetConfirm]=useState(false);
+  const holdTimer=useRef(null);const startYRef=useRef(0);const fileRef=useRef(null);
+  const touchDragIdxRef=useRef(null);const touchItemRefs=useRef([]);const[touchDragging,setTouchDragging]=useState(false);const[touchOverIdx,setTouchOverIdx]=useState(null);
 
   useEffect(()=>{saveTasks(tasks);},[tasks]);
   const selTask=tasks.find(t=>t.id===selId);
   const toggleExpand=useCallback(id=>{setExpanded(p=>({...p,[id]:!p[id]}));},[]);
-
   const addMainTask=()=>{const id=uid();setTasks(p=>[...p,{id,title:"",subtasks:[],completed:false}]);setSelId(id);setScreen("detail");};
   const openTask=id=>{setSelId(id);setScreen("detail");};
 
   const onDragStart=(ev,idx)=>{ev.dataTransfer.effectAllowed="move";setDragIdx(idx);};
   const onDragOver=(ev,idx)=>{ev.preventDefault();setDragOverIdx(idx);};
   const onDragEnd=()=>{if(dragIdx!==null&&dragOverIdx!==null&&dragIdx!==dragOverIdx){setTasks(p=>{const n=[...p];const[m]=n.splice(dragIdx,1);n.splice(dragOverIdx,0,m);return n;});}setDragIdx(null);setDragOverIdx(null);};
-
   const onTouchStart=(ev,idx)=>{startYRef.current=ev.touches[0].clientY;holdTimer.current=setTimeout(()=>{touchDragIdxRef.current=idx;setTouchDragging(true);setTouchOverIdx(idx);if(navigator.vibrate)navigator.vibrate(30);},400);};
   const onTouchMove=ev=>{if(!touchDragging){if(Math.abs(ev.touches[0].clientY-startYRef.current)>8)clearTimeout(holdTimer.current);return;}const y=ev.touches[0].clientY;for(let i=0;i<touchItemRefs.current.length;i++){const el=touchItemRefs.current[i];if(!el)continue;const rect=el.getBoundingClientRect();if(y>=rect.top&&y<=rect.bottom){setTouchOverIdx(i);break;}}};
   const onTouchEnd=()=>{clearTimeout(holdTimer.current);if(touchDragging&&touchDragIdxRef.current!==null&&touchOverIdx!==null&&touchDragIdxRef.current!==touchOverIdx){setTasks(p=>{const n=[...p];const[m]=n.splice(touchDragIdxRef.current,1);n.splice(touchOverIdx,0,m);return n;});}touchDragIdxRef.current=null;setTouchDragging(false);setTouchOverIdx(null);};
@@ -139,7 +158,10 @@ function App(){
   const addSubtask=parentId=>{const child={id:uid(),title:"",subtasks:[],completed:false};if(parentId===selId){updateSelTask(t=>({...t,subtasks:[...t.subtasks,child]}));}else{updateSelTask(t=>({...t,subtasks:deepAdd(t.subtasks,parentId,child)}));}setExpanded(p=>({...p,[parentId]:true}));};
   const removeSubtask=id=>{updateSelTask(t=>({...t,subtasks:deepRemove(t.subtasks,id)}));};
   const renameSubtask=(id,title)=>{updateSelTask(t=>({...t,subtasks:deepRename(t.subtasks,id,title)}));};
-  const reorderSubtask=(parentId,from,to)=>{if(parentId===selId){updateSelTask(t=>{const ns=[...t.subtasks];const[m]=ns.splice(from,1);ns.splice(to,0,m);return{...t,subtasks:ns};});}else{updateSelTask(t=>({...t,subtasks:deepReorder(t.subtasks,parentId,from,to)}));}};
+  const reorderSubtask=useCallback((parentId,from,to)=>{
+    setTasks(prev=>prev.map(t=>{if(t.id!==selId)return t;if(parentId===selId){const ns=[...t.subtasks];const[m]=ns.splice(from,1);ns.splice(to,0,m);return{...t,subtasks:ns};}return{...t,subtasks:deepReorder(t.subtasks,parentId,from,to)};}));
+  },[selId]);
+  const toggleSubtask=id=>{updateSelTask(t=>({...t,subtasks:deepToggleComplete(t.subtasks,id)}));};
   const renameMainTask=title=>{updateSelTask(t=>({...t,title}));};
   const deleteMainTask=()=>{setTasks(p=>p.filter(t=>t.id!==selId));setScreen("home");setSelId(null);setDeleteConfirm(false);};
   const resetProgress=()=>{updateSelTask(t=>({...t,completed:false,subtasks:deepResetAll(t.subtasks)}));setResetConfirm(false);};
@@ -154,10 +176,8 @@ function App(){
 
   if(screen==="home"){
     return h("div",{style:{minHeight:"100dvh",background:"#f9fafb",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column"}},
-      h("div",{style:hdr},
-        h("h1",{style:{fontSize:22,fontWeight:700,margin:0,color:"#1f2937"}},"Operationalize"),
-        h("div",{style:{position:"relative"}},
-          h("button",{onClick:()=>setShowMenu(!showMenu),style:{background:"none",border:"none",fontSize:22,cursor:"pointer",padding:8}},"⋮"),
+      h("div",{style:hdr},h("h1",{style:{fontSize:22,fontWeight:700,margin:0,color:"#1f2937"}},"Operationalize"),
+        h("div",{style:{position:"relative"}},h("button",{onClick:()=>setShowMenu(!showMenu),style:{background:"none",border:"none",fontSize:22,cursor:"pointer",padding:8}},"⋮"),
           showMenu&&h("div",{style:{position:"absolute",right:0,top:40,background:"white",borderRadius:12,boxShadow:"0 4px 24px rgba(0,0,0,0.12)",padding:8,zIndex:30,minWidth:160}},
             h("button",{onClick:doExport,style:{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",border:"none",background:"none",fontSize:15,cursor:"pointer",borderRadius:8}},"Export Data"),
             h("button",{onClick:()=>fileRef.current?.click(),style:{display:"block",width:"100%",textAlign:"left",padding:"10px 14px",border:"none",background:"none",fontSize:15,cursor:"pointer",borderRadius:8}},"Import Data"),
@@ -174,10 +194,7 @@ function App(){
             onDragStart:ev=>onDragStart(ev,i),onDragOver:ev=>onDragOver(ev,i),onDragEnd,
             onTouchStart:ev=>onTouchStart(ev,i),onTouchMove,onTouchEnd,
             onClick:()=>t.title&&openTask(t.id),
-            style:{background:"white",borderRadius:12,padding:"16px 18px",marginBottom:8,
-              boxShadow:dragIdx===i||(touchDragging&&touchDragIdxRef.current===i)?"0 4px 16px rgba(0,0,0,0.15)":"0 1px 3px rgba(0,0,0,0.06)",
-              cursor:"pointer",userSelect:"none",borderLeft:isDO?"3px solid #3b82f6":"3px solid transparent",
-              opacity:done?0.6:1,transform:dragIdx===i?"scale(1.02)":"scale(1)",transition:"box-shadow 0.2s, transform 0.2s, border 0.15s"}},
+            style:{background:"white",borderRadius:12,padding:"16px 18px",marginBottom:8,boxShadow:dragIdx===i||(touchDragging&&touchDragIdxRef.current===i)?"0 4px 16px rgba(0,0,0,0.15)":"0 1px 3px rgba(0,0,0,0.06)",cursor:"pointer",userSelect:"none",borderLeft:isDO?"3px solid #3b82f6":"3px solid transparent",opacity:done?0.6:1,transform:dragIdx===i?"scale(1.02)":"scale(1)",transition:"box-shadow 0.2s, transform 0.2s, border 0.15s"}},
             h("div",{style:{display:"flex",alignItems:"center",gap:10}},
               h(CheckCircle,{checked:done,size:24}),
               h("div",{style:{flex:1,minWidth:0}},
@@ -204,22 +221,17 @@ function App(){
         h("button",{onClick:()=>addSubtask(selId),style:{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",background:"#eff6ff",borderRadius:10,border:"1px dashed #93c5fd",color:"#3b82f6",fontSize:15,fontWeight:500,cursor:"pointer",width:"100%",marginBottom:8}},h("span",{style:{fontSize:20,lineHeight:1}},"+")," Add Step"),
         h("div",{style:{background:"white",borderRadius:12,boxShadow:"0 1px 3px rgba(0,0,0,0.06)",padding:"4px 12px",marginBottom:16}},
           selTask.subtasks?.length===0&&h("div",{style:{textAlign:"center",padding:"24px 12px",color:"#9ca3af",fontSize:14}},"Break this task down into smaller steps"),
-          selTask.subtasks?.map((s,i)=>h(SubtaskNode,{key:s.id,task:s,depth:0,onAdd:addSubtask,onRemove:removeSubtask,onRename:renameSubtask,onReorder:reorderSubtask,expanded,toggleExpand,parentId:selId,index:i,siblingCount:selTask.subtasks.length}))),
+          h(SubtaskGroup,{tasks:selTask.subtasks,parentId:selId,depth:0,onAdd:addSubtask,onRemove:removeSubtask,onRename:renameSubtask,onReorder:reorderSubtask,onToggle:toggleSubtask,expanded,toggleExpand})),
         hasSubs&&doneC>0&&!resetConfirm&&h("button",{onClick:()=>setResetConfirm(true),style:{...btnD,background:"none",color:"#f59e0b",borderColor:"#f59e0b",marginBottom:12}},"Reset Progress"),
         resetConfirm&&h("div",{style:{background:"#fffbeb",border:"1px solid #fcd34d",borderRadius:12,padding:16,marginBottom:12}},
           h("div",{style:{fontSize:15,fontWeight:600,color:"#92400e",marginBottom:8}},"Reset all progress?"),
           h("div",{style:{fontSize:14,color:"#a16207",marginBottom:12}},"This will uncheck all completed steps."),
-          h("div",{style:{display:"flex",gap:8}},
-            h("button",{onClick:()=>setResetConfirm(false),style:{flex:1,padding:"10px",border:"1px solid #d1d5db",borderRadius:8,background:"white",cursor:"pointer",fontSize:14}},"Cancel"),
-            h("button",{onClick:resetProgress,style:{flex:1,padding:"10px",border:"none",borderRadius:8,background:"#f59e0b",color:"white",cursor:"pointer",fontSize:14,fontWeight:600}},"Reset"))),
-        !deleteConfirm?
-          h("button",{onClick:()=>setDeleteConfirm(true),style:btnD},"Delete Task"):
+          h("div",{style:{display:"flex",gap:8}},h("button",{onClick:()=>setResetConfirm(false),style:{flex:1,padding:"10px",border:"1px solid #d1d5db",borderRadius:8,background:"white",cursor:"pointer",fontSize:14}},"Cancel"),h("button",{onClick:resetProgress,style:{flex:1,padding:"10px",border:"none",borderRadius:8,background:"#f59e0b",color:"white",cursor:"pointer",fontSize:14,fontWeight:600}},"Reset"))),
+        !deleteConfirm?h("button",{onClick:()=>setDeleteConfirm(true),style:btnD},"Delete Task"):
           h("div",{style:{background:"#fef2f2",border:"1px solid #fca5a5",borderRadius:12,padding:16}},
             h("div",{style:{fontSize:15,fontWeight:600,color:"#991b1b",marginBottom:8}},"Delete this entire task?"),
             h("div",{style:{fontSize:14,color:"#b91c1c",marginBottom:12}},"This will permanently remove the task and all its steps."),
-            h("div",{style:{display:"flex",gap:8}},
-              h("button",{onClick:()=>setDeleteConfirm(false),style:{flex:1,padding:"10px",border:"1px solid #d1d5db",borderRadius:8,background:"white",cursor:"pointer",fontSize:14}},"Cancel"),
-              h("button",{onClick:deleteMainTask,style:{flex:1,padding:"10px",border:"none",borderRadius:8,background:"#ef4444",color:"white",cursor:"pointer",fontSize:14,fontWeight:600}},"Delete")))),
+            h("div",{style:{display:"flex",gap:8}},h("button",{onClick:()=>setDeleteConfirm(false),style:{flex:1,padding:"10px",border:"1px solid #d1d5db",borderRadius:8,background:"white",cursor:"pointer",fontSize:14}},"Cancel"),h("button",{onClick:deleteMainTask,style:{flex:1,padding:"10px",border:"none",borderRadius:8,background:"#ef4444",color:"white",cursor:"pointer",fontSize:14,fontWeight:600}},"Delete")))),
       hasSubs&&!allDone&&h("div",{style:{position:"fixed",bottom:0,left:0,right:0,padding:"12px 16px",background:"linear-gradient(transparent, #f9fafb 20%)",maxWidth:480,margin:"0 auto"}},
         h("button",{onClick:()=>{setScreen("execute");setExecPhase("showing");},style:{...btnP,background:"#22c55e",fontSize:17,padding:16,borderRadius:14}},"▶ Execute")),
       hasSubs&&allDone&&h("div",{style:{position:"fixed",bottom:0,left:0,right:0,padding:"12px 16px",background:"linear-gradient(transparent, #f9fafb 20%)",maxWidth:480,margin:"0 auto",textAlign:"center"}},
@@ -230,16 +242,10 @@ function App(){
     const leafInfo=findLeafWithPath(selTask.subtasks);const allDone=!leafInfo;
     return h("div",{style:{minHeight:"100dvh",background:"#111827",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",color:"white"}},
       h("div",{style:{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 24px 100px"}},
-        allDone?
-          h("div",{style:{textAlign:"center",animation:"fadeIn 0.5s ease"}},
-            h("div",{style:{fontSize:60,marginBottom:16}},"🎉"),
-            h("div",{style:{fontSize:26,fontWeight:700,marginBottom:8}},"All Done!"),
-            h("div",{style:{fontSize:16,color:"#9ca3af"}},"Every step has been completed.")):
+        allDone?h("div",{style:{textAlign:"center",animation:"fadeIn 0.5s ease"}},h("div",{style:{fontSize:60,marginBottom:16}},"🎉"),h("div",{style:{fontSize:26,fontWeight:700,marginBottom:8}},"All Done!"),h("div",{style:{fontSize:16,color:"#9ca3af"}},"Every step has been completed.")):
           h("div",{onClick:()=>execPhase==="showing"&&completeLeaf(leafInfo.task.id),style:{textAlign:"center",cursor:execPhase==="showing"?"pointer":"default",opacity:execPhase==="fading"?0:1,transition:"opacity 0.4s ease",width:"100%"}},
-            execPhase==="completing"?
-              h("div",{style:{animation:"scaleIn 0.4s ease",display:"flex",justifyContent:"center",width:"100%"}},h(BigCheck)):
-              h(React.Fragment,null,
-                h("div",{style:{fontSize:13,color:"#6b7280",marginBottom:20,lineHeight:1.5}},leafInfo.path.slice(0,-1).join(" › ")),
+            execPhase==="completing"?h("div",{style:{animation:"scaleIn 0.4s ease",display:"flex",justifyContent:"center",width:"100%"}},h(BigCheck)):
+              h(React.Fragment,null,h("div",{style:{fontSize:13,color:"#6b7280",marginBottom:20,lineHeight:1.5}},leafInfo.path.slice(0,-1).join(" › ")),
                 h("div",{style:{fontSize:28,fontWeight:700,lineHeight:1.3,marginBottom:24,padding:"32px 20px",background:"rgba(255,255,255,0.06)",borderRadius:20,border:"1px solid rgba(255,255,255,0.1)"}},leafInfo.task.title),
                 h("div",{style:{fontSize:14,color:"#6b7280"}},"Tap to complete")))),
       h("div",{style:{padding:"16px 20px",borderTop:"1px solid rgba(255,255,255,0.1)"}},
@@ -247,7 +253,6 @@ function App(){
   }
   return null;
 }
-
 ReactDOM.createRoot(document.getElementById("root")).render(h(App));
 </script>
 </body>
