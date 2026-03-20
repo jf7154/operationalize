@@ -15,11 +15,12 @@
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-tap-highlight-color:transparent;overscroll-behavior:none}
 @keyframes scaleIn{from{transform:scale(.3);opacity:0}to{transform:scale(1);opacity:1}}
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes fadeOut{from{opacity:1}to{opacity:0}}
 </style>
 <script>
 const manifest=JSON.stringify({name:"Operationalize",short_name:"Operate",description:"Break complex tasks into simple steps and execute them one at a time.",start_url:"./",display:"standalone",background_color:"#f9fafb",theme_color:"#3b82f6",icons:[{src:"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect width='512' height='512' rx='80' fill='%233b82f6'/><text x='256' y='350' text-anchor='middle' font-size='300' fill='white'>✓</text></svg>",sizes:"512x512",type:"image/svg+xml",purpose:"any maskable"}]});
 const mblob=new Blob([manifest],{type:"application/json"});const mlink=document.createElement("link");mlink.rel="manifest";mlink.href=URL.createObjectURL(mblob);document.head.appendChild(mlink);
-const swCode=`const CACHE='operationalize-v3';const ASSETS=['./'];self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)));self.skipWaiting()});self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));self.clients.claim()});self.addEventListener('fetch',e=>{e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).then(nr=>{if(nr.ok){const c=nr.clone();caches.open(CACHE).then(cache=>cache.put(e.request,c))}return nr}).catch(()=>caches.match('./'))))});`;
+const swCode=`const CACHE='operationalize-v5';const ASSETS=['./'];self.addEventListener('install',e=>{e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)));self.skipWaiting()});self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(ks=>Promise.all(ks.filter(k=>k!==CACHE).map(k=>caches.delete(k)))));self.clients.claim()});self.addEventListener('fetch',e=>{e.respondWith(caches.match(e.request).then(r=>r||fetch(e.request).then(nr=>{if(nr.ok){const c=nr.clone();caches.open(CACHE).then(cache=>cache.put(e.request,c))}return nr}).catch(()=>caches.match('./'))))});`;
 if('serviceWorker' in navigator){const swblob=new Blob([swCode],{type:'application/javascript'});navigator.serviceWorker.register(URL.createObjectURL(swblob)).catch(()=>{});}
 </script>
 </head>
@@ -165,7 +166,7 @@ function App(){
   const renameMainTask=title=>{updateSelTask(t=>({...t,title}));};
   const deleteMainTask=()=>{setTasks(p=>p.filter(t=>t.id!==selId));setScreen("home");setSelId(null);setDeleteConfirm(false);};
   const resetProgress=()=>{updateSelTask(t=>({...t,completed:false,subtasks:deepResetAll(t.subtasks)}));setResetConfirm(false);};
-  const completeLeaf=leafId=>{updateSelTask(t=>({...t,subtasks:deepMark(t.subtasks,leafId)}));playChime();setExecPhase("completing");setTimeout(()=>setExecPhase("fading"),900);setTimeout(()=>setExecPhase("showing"),1050);};
+  const completeLeaf=leafId=>{updateSelTask(t=>({...t,subtasks:deepMark(t.subtasks,leafId)}));playChime();setExecPhase("completing");setTimeout(()=>setExecPhase("fading"),900);setTimeout(()=>setExecPhase("showing"),1400);};
 
   const doExport=()=>{const blob=new Blob([JSON.stringify(tasks,null,2)],{type:"application/json"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="operationalize-backup.json";a.click();URL.revokeObjectURL(url);setShowMenu(false);};
   const doImport=ev=>{const f=ev.target.files?.[0];if(!f)return;const r=new FileReader();r.onload=re=>{try{const data=JSON.parse(re.target.result);if(Array.isArray(data)){setTasks(data);setShowMenu(false);}}catch(e){alert("Invalid file format");}};r.readAsText(f);ev.target.value="";};
@@ -243,8 +244,9 @@ function App(){
     return h("div",{style:{minHeight:"100dvh",background:"#111827",maxWidth:480,margin:"0 auto",display:"flex",flexDirection:"column",color:"white"}},
       h("div",{style:{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"24px 24px 100px"}},
         allDone?h("div",{style:{textAlign:"center",animation:"fadeIn 0.5s ease"}},h("div",{style:{fontSize:60,marginBottom:16}},"🎉"),h("div",{style:{fontSize:26,fontWeight:700,marginBottom:8}},"All Done!"),h("div",{style:{fontSize:16,color:"#9ca3af"}},"Every step has been completed.")):
-          h("div",{onClick:()=>execPhase==="showing"&&completeLeaf(leafInfo.task.id),style:{textAlign:"center",cursor:execPhase==="showing"?"pointer":"default",opacity:execPhase==="fading"?0:1,transition:"opacity 0.4s ease",width:"100%"}},
+          h("div",{onClick:()=>execPhase==="showing"&&completeLeaf(leafInfo.task.id),style:{textAlign:"center",cursor:execPhase==="showing"?"pointer":"default",width:"100%"}},
             execPhase==="completing"?h("div",{style:{animation:"scaleIn 0.4s ease",display:"flex",justifyContent:"center",width:"100%"}},h(BigCheck)):
+            execPhase==="fading"?h("div",{style:{animation:"fadeOut 0.4s ease forwards",display:"flex",justifyContent:"center",width:"100%"}},h(BigCheck)):
               h(React.Fragment,null,h("div",{style:{fontSize:13,color:"#6b7280",marginBottom:20,lineHeight:1.5}},leafInfo.path.slice(0,-1).join(" › ")),
                 h("div",{style:{fontSize:28,fontWeight:700,lineHeight:1.3,marginBottom:24,padding:"32px 20px",background:"rgba(255,255,255,0.06)",borderRadius:20,border:"1px solid rgba(255,255,255,0.1)"}},leafInfo.task.title),
                 h("div",{style:{fontSize:14,color:"#6b7280"}},"Tap to complete")))),
